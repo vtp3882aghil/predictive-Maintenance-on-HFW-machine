@@ -1,84 +1,67 @@
 from django.shortcuts import render
-
-# Create your views here.
 import pandas as pd
-import numpy as np
-from statsmodels.tsa.arima.model import ARIMA
+import os
+from django.conf import settings
 from django.http import JsonResponse
 
-# ✅ Load and forecast function
-def forecast_arima(series, order, steps):
-    model = ARIMA(series, order=order)
-    model_fit = model.fit()
-    return model_fit.forecast(steps=steps)
+def get_fft_data(request):
+    """Reads FFT data from CSV and returns JSON response for live updates."""
+    try:
+        csv_path = os.path.join(settings.STATIC_ROOT, "data", "fft_data.csv")
 
-def run_predictions(request):
-    # Load FFT Data
-    fft_file = "staticfiles/data/fft_data.csv"
-    fft_df = pd.read_csv(fft_file, parse_dates=['time'], index_col='time')
-    fft_df = fft_df.tail(14000)
+        if not os.path.exists(csv_path):
+            return JsonResponse({"error": "CSV file not found!"}, status=500)
 
-    # Load Temperature Data
-    temp_file = "staticfiles/data/motor_temperature.csv"
-    temp_df = pd.read_csv(temp_file, parse_dates=['time'], index_col='time')
-    temp_df = temp_df.tail(1000)
+        df = pd.read_csv(csv_path)
 
-    # Forecast settings
-    forecast_horizon = 14400  # Predict 10 days
-    arima_order = (5, 1, 0)  # ARIMA(5,1,0)
+        if df.empty:
+            return JsonResponse({"error": "CSV file is empty!"}, status=500)
 
-    # ✅ Fault Ranges for Vibration
-    fault_ranges = {
-        (0, 50): "Shaft unbalance, misalignment",
-        (50, 250): "Bearing wear, mechanical looseness",
-        (250, 1000): "Gear faults, resonance, electrical issues",
-        (1000, 1600): "High-frequency bearing defects, structural resonance"
-    }
+        df = df.tail(60)  # Keep only the latest 60 records
 
-    # ✅ Temperature Ranges
-    temp_ranges = {
-        (30, 50): "Idle/No Load",
-        (50, 80): "Normal Load",
-        (80, 110): "Heavy Load",
-        (110, 150): "Overloaded",
-        (150, 180): "Critical/Overheating (Risk of Failure)"
-    }
+        data = {
+            "timestamps": df["time"].astype(str).tolist(),
+            "f1": df["f1"].tolist(),
+            "f2": df["f2"].tolist(),
+            "f3": df["f3"].tolist(),
+        }
+        return JsonResponse(data)
 
-    # ✅ Predictions Storage
-    predictions = {"vibration": {}, "temperature": {}}
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
-    # ✅ Vibration Prediction
-    for motor in ['f1', 'f2', 'f3']:
-        forecast_values = forecast_arima(fft_df[motor], arima_order, forecast_horizon)
-        future_timestamps = pd.date_range(fft_df.index[-1], periods=forecast_horizon, freq='min')
+def live_plot(request):
+    """Renders the live plot page."""
+    return render(request, 'machine/plot.html')
 
-        # Detect fault condition
-        fault_detected = None
-        for i, freq in enumerate(forecast_values):
-            for (low, high), fault_type in fault_ranges.items():
-                if low <= freq < high:
-                    fault_detected = {"fault": fault_type, "time": future_timestamps[i].strftime('%Y-%m-%d %H:%M')}
-                    break
-            if fault_detected:
-                break
 
-        predictions["vibration"][motor] = fault_detected if fault_detected else "No major fault detected"
+def machine_view(req):
+    return render(req,'machine/machine_view.html')
 
-    # ✅ Temperature Prediction
-    for motor in ['t1', 't2', 't3']:
-        forecast_values = forecast_arima(temp_df[motor], arima_order, forecast_horizon)
-        future_timestamps = pd.date_range(temp_df.index[-1], periods=forecast_horizon, freq='min')
 
-        # Detect temperature condition
-        temp_condition = None
-        for i, temp in enumerate(forecast_values):
-            for (low, high), condition in temp_ranges.items():
-                if low <= temp < high:
-                    temp_condition = {"condition": condition, "time": "in 10 days range "}
-                    break
-            if temp_condition:
-                break
+def get_temperature_data(request):
+    """Reads Temperature data from CSV and returns JSON response for live updates."""
+    try:
+        csv_path = os.path.join(settings.STATIC_ROOT, "data", "motor_temperature.csv")
 
-        predictions["temperature"][motor] = temp_condition if temp_condition else "No overheating detected"
+        if not os.path.exists(csv_path):
+            return JsonResponse({"error": "CSV file not found!"}, status=500)
 
-    return JsonResponse(predictions)
+        df = pd.read_csv(csv_path)
+
+        if df.empty:
+            return JsonResponse({"error": "CSV file is empty!"}, status=500)
+
+        df = df.tail(60)  # Keep only the latest 60 records
+
+        data = {
+            "timestamps": df["time"].astype(str).tolist(),
+            "t1": df["t1"].tolist(),
+            "t2": df["t2"].tolist(),
+            "t3": df["t3"].tolist(),
+        }
+        return JsonResponse(data)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
